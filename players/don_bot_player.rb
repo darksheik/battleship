@@ -27,16 +27,17 @@ class DonBotPlayer
       vectors   = @potentials.select { |p| p[:type] == :vector }
       lone_hits = @potentials.select { |p| p[:type] == :lone_hit }
       if vectors.any?
-        smart_targets = vectors.map { |v| follow_vector(v[:adjacent],v[:from_hit]) }.reject(&:nil?)
+        smart_targets = vectors.map { |v| follow_vector(v[:adjacent],v[:from_hit]) }.reject { |v| v.nil? }
         @log << "SMART TARGETS: " + smart_targets.inspect + "\n"
         if smart_targets.any?
-          smart_targets.first
+          smart_targets.first.reject(&:nil?)[0]
         elsif lone_hits.any?
           fire_at_random(lone_hits.map{|lh| lh[:adjacent]})
         else
           fire_at_random(get_types(:unknown))
         end
       elsif lone_hits.any?
+        @log << "No vectors, firing at lone hits: " + lone_hits.inspect + "\n"
         fire_at_random(lone_hits.map{|lh| lh[:adjacent]})
       else
         fire_at_random(get_types(:unknown))
@@ -84,7 +85,6 @@ class DonBotPlayer
       all_adjacents = adjacents(hit[0],hit[1])
       hits       = adjacents_by_type(all_adjacents,:hit)
       unknowns   = adjacents_by_type(all_adjacents,:unknown)
-      #misses     = adjacents_by_type(all_adjacents,:miss)
       vector_found = false
       unknowns.each { |adjacent|
         if hits.include?(reciprocal_adjacent(hit,adjacent))
@@ -93,11 +93,12 @@ class DonBotPlayer
         end
         this_hit_potentials << { :adjacent => adjacent, :type => type, :from_hit => hit }
       }
-      if vector_found == false
+      if vector_found == false && hits.empty?
         this_hit_potentials.each { |thp| thp[:type] = :lone_hit }
       end
       this_hit_potentials.each { |thp| potentials_to_return << thp }
     }
+    @log << potentials_to_return.inspect + "\n"
     potentials_to_return.uniq
   end
 
@@ -145,26 +146,22 @@ class DonBotPlayer
       else
         phase_results = [:left,:right].map { |phase| pointer_phase(phase,vector) }
       end
+      @log << "PHASE RESULTS COMPLETE. "
+      @log << phase_results.inspect + "\n"
+      hits_length = phase_results.map { |pr| pr[0] }.inject(:+) - 1
+      @log << "HITS LENGTH " + hits_length.to_s + "\n"
+      if hits_length <= @ships_remaining.sort.last && hits_length > 1
+        # This ship might be bigger than the largest outstanding ship.  Consider the unknowns as candidates
+        candidates << phase_results.reject{ |pr| pr[1].nil? }.map { |pr| pr[1] }[0]
+      end
     }
-    @log << "PHASE RESULTS COMPLETE. "
-    @log << phase_results.inspect + "\n"
-    hits_length = phase_results.map { |pr| pr[0] }.inject(:+) - 1
-    @log << "HITS LENGTH " + hits_length.to_s + "\n"
-    if hits_length <= @ships_remaining.sort.last
-      # This ship might be bigger than the largest outstanding ship.  Consider the unknowns as candidates
-      phase_results.reject{ |pr| pr[1].nil? }.map { |pr| pr[1] }[0]
-    end
+    candidates
   end
 
   def pointer_phase(phase,vector)
     @log << "PHASE " + phase.to_s + "\n"
     pointer = vector.clone
-    #@log << "POINTER: " + pointer.inspect + "\n"
     hit_count = 0
-    #pointer = increment_pointer(pointer,phase)
-    #candidate = pointer.clone if board_state(pointer) == :unknown
-    #@log << "POINTER NOW AT " + pointer.inspect + "\n"
-    #@log << "BOARD HAS: " + board_state(pointer).inspect + "\n"
 
     previous_pointer = pointer.clone
     while in_bounds(pointer) && board_state(previous_pointer) == :hit
@@ -175,7 +172,7 @@ class DonBotPlayer
       if new_state == :unknown
         candidate = pointer.clone
       else
-        hit_count += 1
+        hit_count += 1 unless new_state == :miss
       end
       @log << "Number of hits catalogued: " + hit_count.to_s + "\n"
       pointer = increment_pointer(pointer,phase)
